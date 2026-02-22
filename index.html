@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- 禁用緩存，確保載入最新版本 -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>雲端課堂互動 V6.1</title>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f0f0f0;
+            touch-action: none;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #setup-screen,
+        #waiting-screen,
+        #drawing-screen,
+        #choice-screen,
+        #text-screen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
+            flex-direction: column;
+            /* For flex display */
+        }
+
+        /* Centered Box for Choice/Text/Setup */
+        .center-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        /* Image Maximization */
+        #choice-img,
+        #text-img {
+            max-width: 95%;
+            max-height: 70vh;
+            object-fit: contain;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button,
+        select,
+        textarea {
+            font-size: 16px;
+            padding: 10px;
+            margin: 5px;
+            width: 100%;
+            max-width: 300px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #0078D7;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            min-height: 44px;
+            /* Touch friendly */
+        }
+
+        button:disabled {
+            background: #ccc;
+        }
+
+        /* Drawing Screen - Fullscreen Layout */
+        #drawing-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #f5f5f5;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-repeat: no-repeat;
+            background-size: contain;
+            background-position: center;
+        }
+
+        #draw-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            z-index: 10;
+            /* Ensure canvas is above background */
+        }
+
+        /* Floating Toolbar - Bottom Center Compact */
+        #toolbar {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 50px;
+            padding: 8px 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        #toolbar.collapsed {
+            bottom: 10px;
+            left: 10px;
+            transform: translateX(0);
+            padding: 6px;
+        }
+
+        #toolbar-toggle {
+            width: 32px;
+            height: 32px;
+            background: rgba(0, 123, 215, 0.9);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        #toolbar-toggle:hover {
+            background: rgba(0, 123, 215, 1);
+            transform: scale(1.1);
+        }
+
+        .color-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .color-btn:hover,
+        .color-btn.active {
+            border-color: #0078D7;
+            transform: scale(1.15);
+        }
+
+        #toolbar button {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        #toolbar button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        #toolbar.collapsed button:not(#toolbar-toggle),
+        #toolbar.collapsed .color-btn {
+            display: none;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+
+        /* Choice */
+        .choice-btn {
+            width: 100%;
+            height: 60px;
+            margin: 10px 0;
+            font-size: 24px;
+            font-weight: bold;
+            background: white;
+            border: 2px solid #0078D7;
+            color: #0078D7;
+        }
+
+        .choice-btn.selected {
+            background: #0078D7;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- 1. Setup Screen -->
+    <div id="setup-screen" style="display: flex;">
+        <div class="center-box">
+            <h2>☁️ 雲端課堂互動</h2>
+            <p style="text-align:center; color:#555; margin-bottom:20px;">
+                請輸入您的姓名加入課堂
+            </p>
+            <input type="text" id="student-name" placeholder="請輸入姓名" />
+
+            <button onclick="saveSetup()">加入課堂</button>
+            <p id="error-msg" style="color:red; font-size:14px; margin-top:10px; display:none;"></p>
+        </div>
+    </div>
+
+    <!-- 2. Waiting Screen -->
+    <div id="waiting-screen">
+        <div class="center-box">
+            <h3>👋 哈囉，<span id="display-name"></span></h3>
+            <p id="status-text">等待老師發送任務...</p>
+            <div id="loader" style="margin-top:20px;">⏳</div>
+        </div>
+    </div>
+
+    <!-- 3. Drawing Screen -->
+    <div id="drawing-screen">
+        <div id="canvas-container">
+            <canvas id="draw-canvas"></canvas>
+        </div>
+
+        <!-- Floating Toolbar - Bottom Center -->
+        <div id="toolbar">
+            <button id="toolbar-toggle" onclick="toggleToolbar()">▼</button>
+
+            <div class="color-btn" style="background:red;" onclick="setColor('red')" title="紅色"></div>
+            <div class="color-btn" style="background:blue;" onclick="setColor('blue')" title="藍色"></div>
+            <div class="color-btn" style="background:black;" onclick="setColor('black')" title="黑色"></div>
+
+            <button onclick="setEraser()" style="background:#666;" title="橡皮擦">🧹</button>
+            <button onclick="clearCanvas()" style="background:#e74c3c;" title="清空">🗑️</button>
+            <button onclick="submitDrawing()" style="background:#4CAF50;" title="提交">✓</button>
+        </div>
+    </div>
+
+    <!-- 4. Choice Screen -->
+    <div id="choice-screen">
+        <div class="center-box">
+            <h3 style="margin-bottom: 10px;">請選擇答案</h3>
+            <img id="choice-img" style="max-width:100%; max-height: 60vh; margin-bottom: 20px;" />
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; width: 100%;">
+                <button class="choice-btn" onclick="selectChoice('A', this)">A</button>
+                <button class="choice-btn" onclick="selectChoice('B', this)">B</button>
+                <button class="choice-btn" onclick="selectChoice('C', this)">C</button>
+                <button class="choice-btn" onclick="selectChoice('D', this)">D</button>
+            </div>
+            <button onclick="submitChoice()"
+                style="margin-top:20px; background:#4CAF50; max-width: 200px;">送出答案</button>
+        </div>
+    </div>
+
+    <!-- 5. Text Screen -->
+    <div id="text-screen">
+        <div class="center-box">
+            <h3 style="margin-bottom: 10px;">請輸入答案</h3>
+            <img id="text-img" style="max-width:100%; max-height: 60vh; margin-bottom: 20px;" />
+            <textarea id="text-answer"
+                style="width:100%; height:100px; padding:10px; font-size:16px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="在此輸入..."></textarea>
+            <button onclick="submitText()" style="margin-top:20px; background:#4CAF50; max-width: 200px;">送出答案</button>
+        </div>
+    </div>
+
+    <script>
+        let db, roomId = "default_room";
+        let currentMission = null;
+        let userData = { name: "", sid: "" };
+        let canvas, ctx, isDrawing = false;
+        let currentColor = "red", currentLineWidth = 5;  // Make line thicker for visibility
+        let selectedChoice = null;
+
+        // Auto-load config from URL params
+        window.onload = function () {
+            // Generate random SID if not exist
+            if (!localStorage.getItem('student_sid')) {
+                localStorage.setItem('student_sid', 'sid_' + Date.now() + Math.random().toString(36).substr(2, 5));
+            }
+            userData.sid = localStorage.getItem('student_sid');
+
+            if (localStorage.getItem('student_name')) {
+                document.getElementById('student-name').value = localStorage.getItem('student_name');
+            }
+
+            showScreen('setup-screen');
+        };
+
+        function showScreen(id) {
+            document.querySelectorAll('body > div').forEach(d => d.style.display = 'none');
+            document.getElementById(id).style.display = 'flex';
+            if (id === 'drawing-screen') {
+                document.getElementById('drawing-screen').style.display = 'block';
+            }
+        }
+
+        function saveSetup() {
+            const name = document.getElementById('student-name').value.trim();
+            if (!name) { alert("請輸入姓名"); return; }
+
+            const params = new URLSearchParams(window.location.search);
+            const apiKey = params.get('apiKey');
+            const dbUrl = params.get('databaseURL');
+            const projectId = params.get('projectId');
+
+            if (!apiKey || !dbUrl) {
+                const msg = document.getElementById('error-msg');
+                msg.innerText = "錯誤：網址缺少 Firebase 設定參數，請由老師提供的連結進入";
+                msg.style.display = 'block';
+                return;
+            }
+
+            userData.name = name;
+            localStorage.setItem('student_name', name);
+            document.getElementById('display-name').innerText = name;
+
+            // Init Firebase
+            if (firebase.apps.length === 0) {
+                try {
+                    firebase.initializeApp({
+                        apiKey: apiKey,
+                        databaseURL: dbUrl,
+                        projectId: projectId
+                    });
+                    db = firebase.database();
+                    registerPresence();
+                    listenMission();
+                    showScreen('waiting-screen');
+                } catch (e) {
+                    alert("Firebase 初始化失敗: " + e.message);
+                }
+            } else {
+                db = firebase.database();
+                registerPresence();
+                listenMission();
+                showScreen('waiting-screen');
+            }
+        }
+
+        function registerPresence() {
+            // Write to presence node
+            const ref = db.ref(`classrooms/${roomId}/students/${userData.sid}`);
+            ref.set({
+                sid: userData.sid,
+                name: userData.name,
+                status: 'online',
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+
+            // Optional: Handle disconnect
+            ref.onDisconnect().update({ status: 'offline' });
+        }
+
+        function listenMission() {
+            const missionRef = db.ref(`classrooms/${roomId}/mission`);
+            missionRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data && data.timestamp) {
+                    // Check if new mission (simple check vs current)
+                    if (!currentMission || data.timestamp !== currentMission.timestamp) {
+                        currentMission = data;
+                        startMission(data);
+                    }
+                } else {
+                    currentMission = null;
+                    showScreen('waiting-screen');
+                    document.getElementById('status-text').innerText = "等待老師發送任務...";
+                }
+            });
+        }
+
+        function startMission(mission) {
+            if (mission.type === 'draw') {
+                setupCanvas(mission.image);
+                showScreen('drawing-screen');
+            } else if (mission.type === 'choice') {
+                resetChoice();
+                const img = document.getElementById('choice-img');
+                if (mission.image) { img.src = mission.image; img.style.display = 'block'; }
+                else { img.style.display = 'none'; }
+                showScreen('choice-screen');
+            } else if (mission.type === 'text') {
+                document.getElementById('text-answer').value = "";
+                const img = document.getElementById('text-img');
+                if (mission.image) { img.src = mission.image; img.style.display = 'block'; }
+                else { img.style.display = 'none'; }
+                showScreen('text-screen');
+            }
+        }
+
+        // --- Drawing Logic ---
+        function setupCanvas(bgImage) {
+            const container = document.getElementById('canvas-container');
+            container.style.backgroundImage = `url('${bgImage}')`;
+
+            canvas = document.getElementById('draw-canvas');
+            // 上方預留 20px，高度最大化
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 20;
+            ctx = canvas.getContext('2d');
+
+            // Events - Pass the full event object for both mouse and touch
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDraw);
+            canvas.addEventListener('mouseleave', stopDraw);
+
+            // Touch events - pass full event, not e.touches[0]
+            canvas.addEventListener('touchstart', startDraw);
+            canvas.addEventListener('touchmove', draw);
+            canvas.addEventListener('touchend', stopDraw);
+
+            window.addEventListener('resize', () => {
+                // Save current drawing
+                const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight - 20;  // 上方預留 20px
+                // Restore drawing
+                ctx.putImageData(imgData, 0, 0);
+                container.style.backgroundImage = `url('${bgImage}')`;
+            });
+        }
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+
+            // Handle both touch and mouse events
+            if (e.type.startsWith('touch')) {
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    return { x: 0, y: 0 };
+                }
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            // Calculate position relative to canvas (accounting for scroll and positioning)
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function startDraw(e) {
+            isDrawing = true;
+            const pos = getPos(e);
+
+            console.log('Start drawing at:', pos, 'Color:', currentColor);
+
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            if (currentColor === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = 20;
+                ctx.strokeStyle = 'rgba(0,0,0,1)'; // Eraser needs a stroke color
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = currentColor;
+                ctx.lineWidth = currentLineWidth;
+            }
+
+            // Immediately draw a dot to confirm color is set
+            ctx.stroke();
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+
+            // Prevent scrolling on touch devices
+            if (e.preventDefault) {
+                e.preventDefault();
+            }
+
+            const pos = getPos(e);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+        }
+
+        function stopDraw() { isDrawing = false; }
+
+        function setColor(c) {
+            currentColor = c;
+            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+            if (c !== 'eraser') event.target.classList.add('active');
+        }
+        function setEraser() { currentColor = 'eraser'; }
+
+        function toggleToolbar() {
+            const toolbar = document.getElementById('toolbar');
+            const toggle = document.getElementById('toolbar-toggle');
+
+            if (toolbar.classList.contains('collapsed')) {
+                toolbar.classList.remove('collapsed');
+                toggle.innerHTML = '▼';
+            } else {
+                toolbar.classList.add('collapsed');
+                toggle.innerHTML = '▲';
+            }
+        }
+
+        function clearCanvas() {
+            if (confirm('確定要清空畫布嗎？')) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function submitDrawing() {
+            console.log('Submit drawing called');
+
+            // Get background image
+            const container = document.getElementById('canvas-container');
+            const bgStyle = container.style.backgroundImage;
+
+            // Extract URL using regex
+            let bgImageUrl = '';
+            if (bgStyle && bgStyle !== 'none') {
+                const match = bgStyle.match(/url\(['"]?(.*?)['"]?\)/);
+                if (match && match[1]) {
+                    bgImageUrl = match[1];
+                }
+            }
+
+            console.log('Background URL:', bgImageUrl);
+
+            // If no background, just submit canvas
+            if (!bgImageUrl) {
+                console.log('No background, submitting canvas only');
+                const dataUrl = canvas.toDataURL('image/png');
+                submitAnswer('draw', dataUrl);
+                return;
+            }
+
+            // Create merged image
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+
+            const bgImg = new Image();
+            bgImg.crossOrigin = 'anonymous';
+
+            // Set timeout fallback (if image doesn't load in 3 seconds)
+            const timeoutId = setTimeout(() => {
+                console.warn('Background image load timeout, submitting canvas only');
+                const dataUrl = canvas.toDataURL('image/png');
+                submitAnswer('draw', dataUrl);
+            }, 3000);
+
+            bgImg.onload = function () {
+                clearTimeout(timeoutId);
+                try {
+                    console.log('Background loaded:', bgImg.width, 'x', bgImg.height);
+
+                    // Calculate aspect ratio fit
+                    const canvasAspect = tempCanvas.width / tempCanvas.height;
+                    const imgAspect = bgImg.width / bgImg.height;
+                    let drawWidth, drawHeight, offsetX, offsetY;
+
+                    if (imgAspect > canvasAspect) {
+                        drawWidth = tempCanvas.width;
+                        drawHeight = tempCanvas.width / imgAspect;
+                        offsetX = 0;
+                        offsetY = (tempCanvas.height - drawHeight) / 2;
+                    } else {
+                        drawHeight = tempCanvas.height;
+                        drawWidth = tempCanvas.height * imgAspect;
+                        offsetX = (tempCanvas.width - drawWidth) / 2;
+                        offsetY = 0;
+                    }
+
+                    // Draw background, then canvas
+                    tempCtx.drawImage(bgImg, offsetX, offsetY, drawWidth, drawHeight);
+                    tempCtx.drawImage(canvas, 0, 0);
+
+                    const dataUrl = tempCanvas.toDataURL('image/png');
+                    console.log('Merged image created, size:', dataUrl.length);
+                    submitAnswer('draw', dataUrl);
+                } catch (error) {
+                    console.error('Merge error:', error);
+                    // Fallback
+                    const dataUrl = canvas.toDataURL('image/png');
+                    submitAnswer('draw', dataUrl);
+                }
+            };
+
+            bgImg.onerror = function () {
+                clearTimeout(timeoutId);
+                console.error('Background image load failed');
+                // Fallback
+                const dataUrl = canvas.toDataURL('image/png');
+                submitAnswer('draw', dataUrl);
+            };
+
+            bgImg.src = bgImageUrl;
+        }
+
+        // --- Choice Logic ---
+        function selectChoice(opt, btn) {
+            selectedChoice = opt;
+            document.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        }
+        function resetChoice() {
+            selectedChoice = null;
+            document.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+        }
+        function submitChoice() {
+            if (!selectedChoice) return alert("請選擇一個答案");
+            submitAnswer('choice', selectedChoice);
+        }
+
+        // --- Text Logic ---
+        function submitText() {
+            const val = document.getElementById('text-answer').value.trim();
+            if (!val) return alert("請輸入內容");
+            submitAnswer('text', val);
+        }
+
+        // --- Submission ---
+        function submitAnswer(type, content) {
+            if (!db) {
+                console.error('Firebase database not initialized');
+                alert('Firebase 連線失敗，請重新整理頁面');
+                return;
+            }
+
+            const timestamp = Date.now();
+            const answerData = {
+                sid: userData.sid,
+                name: userData.name,
+                type: type,
+                content: content,
+                timestamp: timestamp
+            };
+
+            console.log('Submitting answer to Firebase:', {
+                type: type,
+                contentLength: content ? content.length : 0,
+                sid: userData.sid,
+                name: userData.name
+            });
+
+            // 使用姓名+時間戳記作為 key，而非裝置ID
+            // 這樣同一裝置使用不同姓名可以分別記錄
+            const answerKey = `${userData.name}_${timestamp}`;
+            const ref = db.ref(`classrooms/${roomId}/answers/${answerKey}`);
+
+            ref.set(answerData)
+                .then(() => {
+                    console.log('Answer submitted successfully to Firebase');
+                    alert('提交成功！');
+                    showScreen('waiting-screen');
+                    document.getElementById('status-text').innerText = "答案已送出，等待下個任務...";
+                })
+                .catch((error) => {
+                    console.error('Firebase submission error:', error);
+                    alert('提交失敗: ' + error.message);
+                });
+        }
+
+    </script>
+</body>
+
+</html>
